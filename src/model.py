@@ -13,6 +13,7 @@ class SkipGram(ABC):
         window_size: int = 2,
         learning_rate: float = 0.01,
         subsample_t: float = 1e-5,
+        adagrad_epsilon: float = 1e-8,
         seed: int = 42,
     ):
         self.V = vocab_size
@@ -20,9 +21,35 @@ class SkipGram(ABC):
         self.window_size = window_size
         self.learning_rate = learning_rate
         self.subsample_t = subsample_t
+        self.adagrad_epsilon = adagrad_epsilon
         self.rng = np.random.default_rng(seed)
         self.W1 = self.rng.uniform(-0.1, 0.1, (vocab_size, embed_size))
         self.W2 = self.rng.uniform(-0.1, 0.1, (embed_size, vocab_size))
+        self.W1_grad_sq = np.zeros_like(self.W1)
+        self.W2_grad_sq = np.zeros_like(self.W2)
+        self.loss_history: dict[str, list] = {
+            "within_epoch": [],
+            "across_epochs": [],
+        }
+
+    def _reset_loss_history(self):
+        self.loss_history = {
+            "within_epoch": [],
+            "across_epochs": [],
+        }
+
+    def _apply_adagrad_update(
+        self,
+        weights: np.ndarray,
+        grad: np.ndarray,
+        grad_sq_accumulator: np.ndarray,
+    ):
+        """Apply one AdaGrad update step in-place."""
+        grad_sq_accumulator += np.square(grad)
+        adjusted_lr = self.learning_rate / (
+            np.sqrt(grad_sq_accumulator) + self.adagrad_epsilon
+        )
+        weights -= adjusted_lr * grad
 
     @abstractmethod
     def fit(
@@ -61,6 +88,7 @@ class CBOW(SkipGram):
         window_size: int = 2,
         learning_rate: float = 0.01,
         subsample_t: float = 1e-5,
+        adagrad_epsilon: float = 1e-8,
         seed: int = 42,
     ):
         super().__init__(
@@ -69,6 +97,7 @@ class CBOW(SkipGram):
             window_size=window_size,
             learning_rate=learning_rate,
             subsample_t=subsample_t,
+            adagrad_epsilon=adagrad_epsilon,
             seed=seed,
         )
 
@@ -96,12 +125,16 @@ class CBOW(SkipGram):
         dW2 = np.outer(h, e)   # Shape: (EMBED_SIZE, V)
         dh = np.dot(self.W2, e)  # Shape: (EMBED_SIZE,)
 
-        # 3. Parameter updates (SGD)
-        self.W2 -= self.learning_rate * dW2
+        # 3. Parameter updates (AdaGrad)
+        self._apply_adagrad_update(self.W2, dW2, self.W2_grad_sq)
 
-        # Gradient of the sum splits equally to all context words
+        # Gradient of the sum is applied to each context row independently
         for cid in context_ids:
-            self.W1[cid] -= self.learning_rate * dh
+            self._apply_adagrad_update(
+                self.W1[cid],
+                dh,
+                self.W1_grad_sq[cid],
+            )
 
     def forward(
         self,
@@ -139,6 +172,8 @@ class CBOW(SkipGram):
             print("No training tokens provided. Skipping training.")
             return
 
+        self._reset_loss_history()
+
         word_freq = np.bincount(flat_tokens, minlength=self.V) / len(
             flat_tokens
         )
@@ -150,6 +185,7 @@ class CBOW(SkipGram):
         for epoch in range(epochs):
             total_loss = 0
             num_trained = 0
+            epoch_losses: list[float] = []
 
             for paragraph in data_paragraphs:
                 if len(paragraph) <= 2 * self.window_size:
@@ -174,6 +210,7 @@ class CBOW(SkipGram):
                     # Forward pass
                     loss, h, y_pred = self.forward(context_ids, target_id)
                     total_loss += loss
+                    epoch_losses.append(float(loss))
 
                     # Backward pass and parameter updates
                     self.backward(h, y_pred, target_id, context_ids)
@@ -188,10 +225,14 @@ class CBOW(SkipGram):
                         )
 
             avg_loss = total_loss / num_trained if num_trained > 0 else 0.0
+            self.loss_history["within_epoch"].append(epoch_losses)
+            self.loss_history["across_epochs"].append(float(avg_loss))
             print(
                 f"Epoch {epoch + 1} complete. Final Average Loss: "
                 f"{avg_loss:.4f} (trained on {num_trained} windows)"
             )
+
+        return self.loss_history
 
     def evaluate(self, data_paragraphs: list[list[int]]) -> float:
         """Compute average loss on paragraphs (no updates, no subsampling)."""
@@ -227,6 +268,7 @@ class SkipGramNegativeSampling(SkipGram):
         learning_rate: float = 0.01,
         negative_samples: int = 5,
         subsample_t: float = 1e-5,
+        adagrad_epsilon: float = 1e-8,
         seed: int = 42,
     ):
         super().__init__(
@@ -235,6 +277,7 @@ class SkipGramNegativeSampling(SkipGram):
             window_size=window_size,
             learning_rate=learning_rate,
             subsample_t=subsample_t,
+            adagrad_epsilon=adagrad_epsilon,
             seed=seed,
         )
         self.negative_samples = negative_samples
@@ -242,6 +285,7 @@ class SkipGramNegativeSampling(SkipGram):
         # SGNS needs one output embedding per vocabulary item.
         # Shape must be (V, embed_size), not (embed_size, V) as in CBOW.
         self.W2 = self.rng.uniform(-0.1, 0.1, (vocab_size, embed_size))
+        self.W2_grad_sq = np.zeros_like(self.W2)
 
     def _sample_negative_ids(
         self,
@@ -346,16 +390,26 @@ class SkipGramNegativeSampling(SkipGram):
         grad_center = (pos_sigmoid - 1.0) * u_pos
         grad_center += np.dot(neg_sigmoids, u_negs)
 
-        self.W2[context_id] -= self.learning_rate * (
-            (pos_sigmoid - 1.0) * v_center
+        grad_context = (pos_sigmoid - 1.0) * v_center
+        self._apply_adagrad_update(
+            self.W2[context_id],
+            grad_context,
+            self.W2_grad_sq[context_id],
         )
 
         for idx, neg_id in enumerate(negative_ids):
-            self.W2[neg_id] -= self.learning_rate * (
-                neg_sigmoids[idx] * v_center
+            grad_negative = neg_sigmoids[idx] * v_center
+            self._apply_adagrad_update(
+                self.W2[neg_id],
+                grad_negative,
+                self.W2_grad_sq[neg_id],
             )
 
-        self.W1[center_id] -= self.learning_rate * grad_center
+        self._apply_adagrad_update(
+            self.W1[center_id],
+            grad_center,
+            self.W1_grad_sq[center_id],
+        )
 
     def fit(
         self,
@@ -379,9 +433,12 @@ class SkipGramNegativeSampling(SkipGram):
             print("No training tokens provided. Skipping training.")
             return
 
+        self._reset_loss_history()
+
         for epoch in range(epochs):
             total_loss = 0.0
             num_trained_pairs = 0
+            epoch_losses: list[float] = []
 
             for paragraph in data_paragraphs:
                 if len(paragraph) <= 1:
@@ -407,6 +464,7 @@ class SkipGramNegativeSampling(SkipGram):
                         self.backward(cache)
                         loss = float(cache["pair_loss"])
                         total_loss += loss
+                        epoch_losses.append(loss)
                         num_trained_pairs += 1
 
                         if (
@@ -424,10 +482,14 @@ class SkipGramNegativeSampling(SkipGram):
                 if num_trained_pairs > 0
                 else 0.0
             )
+            self.loss_history["within_epoch"].append(epoch_losses)
+            self.loss_history["across_epochs"].append(float(avg_loss))
             print(
                 f"Epoch {epoch + 1} complete. Final Average Loss: "
                 f"{avg_loss:.4f} (trained on {num_trained_pairs} pairs)"
             )
+
+        return self.loss_history
 
     def evaluate(self, data_paragraphs: list[list[int]]) -> float:
         """Compute average SGNS loss on paragraphs (no updates)."""
