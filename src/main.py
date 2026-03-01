@@ -4,7 +4,7 @@ from utils import (
     build_vocab,
     tokenize,
 )
-from model import CBOW
+from model import SkipGram, CBOW, SkipGramNegativeSampling
 from evaluate import test_nearest_neighbors
 import kagglehub
 import numpy as np
@@ -18,7 +18,7 @@ if __name__ == "__main__":
     train_files, val_files, test_files = load_csv_train_val_test(
         path, train_ratio=0.8, val_ratio=0.1, test_ratio=0.1
     )
-    
+
     print(f"Found {len(train_files)} many files")
 
     VOCAB_SIZE = 3000
@@ -27,6 +27,8 @@ if __name__ == "__main__":
     LEARNING_RATE = 0.05
     SUBSAMPLE_T = 1e-2
     EPOCHS = 5
+    NEGATIVE_SAMPLES = 5
+    MODEL_TYPE = "sgns"  # "cbow" or "sgns"
 
     # Build vocab from TRAIN only (avoid leakage).
     # OOV maps to UNK to preserve word order.
@@ -62,13 +64,24 @@ if __name__ == "__main__":
     )
     print(f"Vocabulary: {V} (incl. {UNK_TOKEN}). Uknown ratio: {unk_ratio}%")
 
-    model = CBOW(
-        vocab_size=V,
-        embed_size=EMBED_SIZE,
-        window_size=WINDOW_SIZE,
-        learning_rate=LEARNING_RATE,
-        subsample_t=SUBSAMPLE_T,
-    )
+    model: SkipGram
+    if MODEL_TYPE == "sgns":
+        model = SkipGramNegativeSampling(
+            vocab_size=V,
+            embed_size=EMBED_SIZE,
+            window_size=WINDOW_SIZE,
+            learning_rate=LEARNING_RATE,
+            negative_samples=NEGATIVE_SAMPLES,
+            subsample_t=SUBSAMPLE_T,
+        )
+    else:
+        model = CBOW(
+            vocab_size=V,
+            embed_size=EMBED_SIZE,
+            window_size=WINDOW_SIZE,
+            learning_rate=LEARNING_RATE,
+            subsample_t=SUBSAMPLE_T,
+        )
 
     print("Starting training...")
     model.fit(train_data, epochs=EPOCHS)

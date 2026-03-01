@@ -13,6 +13,12 @@ def softmax(x: np.ndarray) -> np.ndarray:
     return e_x / e_x.sum(axis=0)
 
 
+def sigmoid(x: float | np.ndarray) -> float | np.ndarray:
+    """Numerically-stable sigmoid."""
+    x = np.clip(x, -10, 10)
+    return 1.0 / (1.0 + np.exp(-x))
+
+
 ## Auxiliary functions for loading and preprocessing the data
 def load_corpus_from_csv(data_path: str, max_rows: int | None = None) -> list[list[str]]:
     """
