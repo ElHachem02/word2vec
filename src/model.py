@@ -49,61 +49,104 @@ class CBOW:
         loss = -np.log(y_pred[target_id] + 1e-9)
         return loss, h, y_pred
 
-    def fit(self, data: list[int], epochs: int = 3, progress_interval: int = 10000):
+    def fit(
+        self,
+        data_paragraphs: list[list[int]],
+        epochs: int = 3,
+        progress_interval: int = 10000,
+    ):
         """
-        Train the CBOW model on tokenized data (list of word IDs).
+        Train the CBOW model on tokenized paragraphs.
 
         Args:
-            data: List of word IDs (integers)
+            data_paragraphs: List of paragraphs, each paragraph is a list of
+                word IDs.
             epochs: Number of training epochs
             progress_interval: Print progress every N trained windows
         """
-        word_freq = np.bincount(data, minlength=self.V) / len(data)
-        keep_prob = np.minimum(1.0, np.sqrt(self.subsample_t / (word_freq + 1e-10)))
+        flat_tokens = [
+            token_id
+            for paragraph in data_paragraphs
+            for token_id in paragraph
+        ]
+        if len(flat_tokens) == 0:
+            print("No training tokens provided. Skipping training.")
+            return
+
+        word_freq = np.bincount(flat_tokens, minlength=self.V) / len(
+            flat_tokens
+        )
+        keep_prob = np.minimum(
+            1.0,
+            np.sqrt(self.subsample_t / (word_freq + 1e-10)),
+        )
 
         for epoch in range(epochs):
             total_loss = 0
             num_trained = 0
 
-            for i in range(self.window_size, len(data) - self.window_size):
-                context_ids = (
-                    data[i - self.window_size : i]
-                    + data[i + 1 : i + self.window_size + 1]
-                )
-                target_id = data[i]
-
-                # Subsampling: skip frequent words
-                if np.random.random() > keep_prob[target_id]:
+            for paragraph in data_paragraphs:
+                if len(paragraph) <= 2 * self.window_size:
                     continue
 
-                num_trained += 1
+                for i in range(
+                    self.window_size,
+                    len(paragraph) - self.window_size,
+                ):
+                    context_ids = (
+                        paragraph[i - self.window_size: i]
+                        + paragraph[i + 1: i + self.window_size + 1]
+                    )
+                    target_id = paragraph[i]
 
-                # Forward pass
-                loss, h, y_pred = self._forward(context_ids, target_id)
-                total_loss += loss
+                    # Subsampling: skip frequent words
+                    if np.random.random() > keep_prob[target_id]:
+                        continue
 
-                # Backward pass and parameter updates
-                self.backward_pass(h, y_pred, target_id, context_ids)
+                    num_trained += 1
 
-                if num_trained % progress_interval == 0 and num_trained > 0:
-                    print(f"Processed {num_trained} windows. Current avg loss: {total_loss / num_trained:.4f}")
+                    # Forward pass
+                    loss, h, y_pred = self._forward(context_ids, target_id)
+                    total_loss += loss
+
+                    # Backward pass and parameter updates
+                    self.backward_pass(h, y_pred, target_id, context_ids)
+
+                    if (
+                        num_trained % progress_interval == 0
+                        and num_trained > 0
+                    ):
+                        print(
+                            f"Processed {num_trained} windows. "
+                            f"Current avg loss: {total_loss / num_trained:.4f}"
+                        )
 
             avg_loss = total_loss / num_trained if num_trained > 0 else 0.0
-            print(f"Epoch {epoch + 1} complete. Final Average Loss: {avg_loss:.4f} (trained on {num_trained} windows)")
+            print(
+                f"Epoch {epoch + 1} complete. Final Average Loss: "
+                f"{avg_loss:.4f} (trained on {num_trained} windows)"
+            )
 
-    def evaluate(self, data: list[int]) -> float:
-        """Compute average loss on data (no updates, no subsampling)."""
+    def evaluate(self, data_paragraphs: list[list[int]]) -> float:
+        """Compute average loss on paragraphs (no updates, no subsampling)."""
         total_loss = 0
         count = 0
-        for i in range(self.window_size, len(data) - self.window_size):
-            context_ids = (
-                data[i - self.window_size : i]
-                + data[i + 1 : i + self.window_size + 1]
-            )
-            target_id = data[i]
-            loss, _, _ = self._forward(context_ids, target_id)
-            total_loss += loss
-            count += 1
+        for paragraph in data_paragraphs:
+            if len(paragraph) <= 2 * self.window_size:
+                continue
+
+            for i in range(
+                self.window_size,
+                len(paragraph) - self.window_size,
+            ):
+                context_ids = (
+                    paragraph[i - self.window_size: i]
+                    + paragraph[i + 1: i + self.window_size + 1]
+                )
+                target_id = paragraph[i]
+                loss, _, _ = self._forward(context_ids, target_id)
+                total_loss += loss
+                count += 1
         return total_loss / count if count > 0 else 0.0
 
     @property

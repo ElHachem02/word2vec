@@ -16,7 +16,7 @@ if __name__ == "__main__":
 
     print("Loading CSV and splitting into train/val/test (80/10/10)...")
     train_files, val_files, test_files = load_csv_train_val_test(
-        path, train_ratio=0.8, val_ratio=0.1, test_ratio=0.1, max_rows=100
+        path, train_ratio=0.8, val_ratio=0.1, test_ratio=0.1
     )
     
     print(f"Found {len(train_files)} many files")
@@ -24,9 +24,9 @@ if __name__ == "__main__":
     VOCAB_SIZE = 3000
     EMBED_SIZE = 50
     WINDOW_SIZE = 2
-    LEARNING_RATE = 0.01
-    SUBSAMPLE_T = 1e-5
-    EPOCHS = 3
+    LEARNING_RATE = 0.05
+    SUBSAMPLE_T = 1e-2
+    EPOCHS = 5
 
     # Build vocab from TRAIN only (avoid leakage).
     # OOV maps to UNK to preserve word order.
