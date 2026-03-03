@@ -71,10 +71,42 @@ uv run python -m src.main --train cbow
 
 | Metric      | Value  |
 | ----------- | ------ |
-| `val_loss`  | 1.9096 |
-| `test_loss` | 1.9095 |
+| `val_loss`  | 4.7184 |
+| `test_loss` | 4.7098 |
 
 ### Testing embeddings in practice
+
+Nearest neighbors for 'man':
+
+- girl: 0.7524
+- woman: 0.7431
+- child: 0.7162
+- writer: 0.6557
+- boy: 0.6496
+
+Nearest neighbors for 'time':
+
+- moment: 0.6865
+- argument: 0.6683
+- night: 0.6631
+- day: 0.6298
+- month: 0.6238
+
+Nearest neighbors for 'year':
+
+- week: 0.7347
+- month: 0.6719
+- season: 0.6552
+- minute: 0.6450
+- night: 0.6402
+
+Nearest neighbors for 'good':
+
+- bad: 0.5682
+- strong: 0.5368
+- great: 0.5322
+- big: 0.5069
+- simple: 0.4857
 
 ## Skip-Gram with Negative Sampling (SGNS)
 

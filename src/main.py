@@ -75,7 +75,7 @@ def main(
     vocab_size = 3000
     embed_size = 50
     window_size = 2
-    learning_rate = 0.1
+    learning_rate = 0.05
     subsample_t = 1e-2
     negative_samples = 5
 
