@@ -144,6 +144,38 @@ def plot_label_distribution(
     _savefig(out_path)
 
 
+def plot_overall_label_distribution_pie(
+    label_distributions: dict[str, dict[str, float]],
+    out_path: Path,
+):
+    overall = label_distributions.get("overall", {})
+    if not overall:
+        return
+
+    raw_labels = list(overall.keys())
+    labels = [
+        "sf" if label == "science_fiction" else label
+        for label in raw_labels
+    ]
+    sizes = [overall[label] for label in raw_labels]
+
+    def _autopct(pct: float) -> str:
+        if pct < 5.2:
+            return ""
+        return f"{pct:.1f}%"
+
+    plt.figure(figsize=(7, 7))
+    plt.pie(
+        sizes,
+        labels=labels,
+        autopct=_autopct,
+        startangle=90,
+    )
+    plt.title("Overall label distribution")
+    plt.axis("equal")
+    _savefig(out_path)
+
+
 def visualise_dataset(
     data_path: str,
     vocab_size: int = 3000,
@@ -221,6 +253,10 @@ def visualise_dataset(
         label_distributions,
         out / "label_distribution.png",
     )
+    plot_overall_label_distribution_pie(
+        label_distributions,
+        out / "overall_label_distribution_pie.png",
+    )
 
     summary = {
         "splits": {
@@ -252,6 +288,9 @@ def visualise_dataset(
             "split_sizes": str(out / "split_sizes.png"),
             "unk_ratio": str(out / "unk_ratio.png"),
             "label_distribution": str(out / "label_distribution.png"),
+            "overall_label_distribution_pie": str(
+                out / "overall_label_distribution_pie.png"
+            ),
             "windows_per_file": str(out / "windows_per_file.png"),
         },
     }

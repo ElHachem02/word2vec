@@ -4,6 +4,9 @@ import re
 import csv
 from collections import Counter
 from pathlib import Path
+import matplotlib
+import matplotlib.pyplot as plt
+
 
 UNK_TOKEN = "<UNK>"
 
@@ -279,12 +282,9 @@ def plot_loss_history(
     """
     Plot tracked training loss history saved from main training loop.
 
-    Expects an `.npz` file with keys:
+    Expects an `.npz` file with key:
     - `across_epochs`: 1D array of average loss per epoch
-    - `within_epoch`: object array, each item is a per-update loss list
     """
-    import matplotlib
-    import matplotlib.pyplot as plt
 
     matplotlib.use("Agg")
 
@@ -299,12 +299,6 @@ def plot_loss_history(
         loaded["across_epochs"],
         dtype=np.float64,
     )
-    within_epoch_raw = loaded["within_epoch"]
-
-    within_epoch: list[np.ndarray] = [
-        np.asarray(epoch_losses, dtype=np.float64)
-        for epoch_losses in within_epoch_raw
-    ]
 
     if out_path is None:
         out_path = loss_history_path.with_name(
@@ -315,30 +309,17 @@ def plot_loss_history(
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    fig, ax = plt.subplots(1, 1, figsize=(8, 5))
 
     if across_epochs.size > 0:
-        axes[0].plot(
+        ax.plot(
             np.arange(1, across_epochs.size + 1),
             across_epochs,
             marker="o",
         )
-    axes[0].set_title("Average loss across epochs")
-    axes[0].set_xlabel("Epoch")
-    axes[0].set_ylabel("Loss")
-
-    has_within_epoch = False
-    for epoch_index, epoch_losses in enumerate(within_epoch, start=1):
-        if epoch_losses.size == 0:
-            continue
-        has_within_epoch = True
-        axes[1].plot(epoch_losses, alpha=0.5, label=f"epoch {epoch_index}")
-
-    axes[1].set_title("Per-update loss within each epoch")
-    axes[1].set_xlabel("Update step")
-    axes[1].set_ylabel("Loss")
-    if has_within_epoch and len(within_epoch) <= 10:
-        axes[1].legend()
+    ax.set_title("Average loss across epochs")
+    ax.set_xlabel("Epoch")
+    ax.set_ylabel("Loss")
 
     plt.tight_layout()
     plt.savefig(out_path, dpi=160)
@@ -347,6 +328,307 @@ def plot_loss_history(
     return str(out_path)
 
 
-## Auxiliary function for grid search evaluation
-def grid_search():
-    return
+# Auxiliary function for grid-search evaluation
+def grid_search_negative_sampling(
+    train_data: list[list[int]],
+    val_data: list[list[int]],
+    test_data: list[list[int]],
+    word_to_id: dict,
+    epochs: int = 2,
+    embed_size: int = 50,
+    seed: int = 42,
+    initial_learning_rates: list[float] | None = None,
+    negative_samples_values: list[int] | None = None,
+    window_sizes: list[int] | None = None,
+    out_dir: str | Path | None = None,
+    top_k: int = 3,
+) -> dict[str, object]:
+    """
+    Grid-search SGNS hyperparameters on Brown corpus splits.
+
+    Tries all combinations of:
+    - initial learning rate
+    - number of negative samples
+    - window size
+
+    Returns summary containing all runs and the best run by validation loss.
+    Also stores embeddings and loss history for top-k runs by validation loss.
+    """
+
+    from .model import SkipGramNegativeSampling
+
+    if initial_learning_rates is None:
+        initial_learning_rates = [0.01, 0.03, 0.05]
+    if negative_samples_values is None:
+        negative_samples_values = [3, 5, 8]
+    if window_sizes is None:
+        window_sizes = [2, 3, 4]
+
+    if len(initial_learning_rates) != 3:
+        raise ValueError("Provide exactly 3 values for initial_learning_rates")
+    if len(negative_samples_values) != 3:
+        raise ValueError(
+            "Provide exactly 3 values for negative_samples_values"
+        )
+    if len(window_sizes) != 3:
+        raise ValueError("Provide exactly 3 values for window_sizes")
+    if top_k <= 0:
+        raise ValueError("top_k must be at least 1")
+
+    results: list[dict[str, float | int]] = []
+    top_candidates: list[
+        tuple[dict[str, float | int], np.ndarray, list[float]]
+    ] = []
+    run_idx = 0
+    total_runs = (
+        len(initial_learning_rates)
+        * len(negative_samples_values)
+        * len(window_sizes)
+    )
+
+    for learning_rate in initial_learning_rates:
+        for negative_samples in negative_samples_values:
+            for window_size in window_sizes:
+                run_idx += 1
+                print(
+                    f"[Grid {run_idx}/{total_runs}] "
+                    f"lr={learning_rate}, "
+                    f"neg={negative_samples}, "
+                    f"window={window_size}"
+                )
+
+                model = SkipGramNegativeSampling(
+                    vocab_size=len(word_to_id),
+                    embed_size=embed_size,
+                    window_size=window_size,
+                    learning_rate=learning_rate,
+                    negative_samples=negative_samples,
+                    subsample_t=1e-2,
+                    seed=seed,
+                )
+
+                loss_history = model.fit(train_data, epochs=epochs)
+                across_epochs: list[float] = []
+                if isinstance(loss_history, dict):
+                    across_epochs = [
+                        float(x)
+                        for x in loss_history.get("across_epochs", [])
+                    ]
+
+                train_loss = 0.0
+                if across_epochs:
+                    train_loss = float(across_epochs[-1])
+
+                val_loss = float(model.evaluate(val_data))
+                test_loss = float(model.evaluate(test_data))
+
+                run_metrics: dict[str, float | int] = {
+                    "learning_rate": float(learning_rate),
+                    "negative_samples": int(negative_samples),
+                    "window_size": int(window_size),
+                    "train_loss": train_loss,
+                    "val_loss": val_loss,
+                    "test_loss": test_loss,
+                }
+                results.append(run_metrics)
+
+                top_candidates.append(
+                    (run_metrics, model.embeddings.copy(), across_epochs)
+                )
+                top_candidates.sort(
+                    key=lambda x: float(x[0]["val_loss"])
+                )
+                top_candidates = top_candidates[:top_k]
+
+    if not results:
+        raise RuntimeError("No grid-search runs were executed.")
+
+    best_run = min(results, key=lambda x: float(x["val_loss"]))
+
+    artifacts_dir = (
+        Path(out_dir)
+        if out_dir is not None
+        else Path("grid_search_sgns_artifacts")
+    )
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+    saved_top_runs: list[dict[str, object]] = []
+    for rank, candidate in enumerate(top_candidates, start=1):
+        metrics, embeddings, across_epochs = candidate
+        learning_rate = float(metrics["learning_rate"])
+        negative_samples = int(metrics["negative_samples"])
+        window_size = int(metrics["window_size"])
+        lr_tag = str(learning_rate).replace(".", "p")
+        run_tag = (
+            f"rank{rank}_lr{lr_tag}_"
+            f"neg{negative_samples}_win{window_size}"
+        )
+
+        embeddings_path = artifacts_dir / f"{run_tag}_embeddings.npy"
+        loss_history_path = artifacts_dir / f"{run_tag}_loss_history.npz"
+
+        np.save(embeddings_path, np.asarray(embeddings))
+        np.savez(
+            loss_history_path,
+            across_epochs=np.asarray(
+                across_epochs,
+                dtype=np.float64,
+            ),
+        )
+
+        saved_top_runs.append(
+            {
+                "rank": rank,
+                **metrics,
+                "embeddings_path": str(embeddings_path),
+                "loss_history_path": str(loss_history_path),
+            }
+        )
+
+    return {
+        "num_runs": len(results),
+        "search_space": {
+            "initial_learning_rates": initial_learning_rates,
+            "negative_samples_values": negative_samples_values,
+            "window_sizes": window_sizes,
+        },
+        "best_by_val": best_run,
+        "artifacts_dir": str(artifacts_dir),
+        "top_k_saved": saved_top_runs,
+        "all_results": results,
+    }
+
+
+def grid_search_cbow(
+    train_data: list[list[int]],
+    val_data: list[list[int]],
+    word_to_id: dict,
+    epochs: int = 2,
+    embed_size: int = 50,
+    seed: int = 42,
+    learning_rates: list[float] = [0.05, 0.1, 0.3],
+    window_sizes: list[int] = [2, 3, 4],
+    out_dir: str | Path | None = None,
+    top_k: int = 3,
+) -> dict[str, object]:
+    """
+    Grid-search CBOW hyperparameters on Brown corpus splits.
+
+    Tries all combinations of:
+    - initial learning rate
+    - window size
+
+    Returns summary containing all runs and the best run by validation loss.
+    Also stores embeddings and loss history for top-k runs by validation loss.
+    """
+
+    from .model import CBOW
+
+    if top_k <= 0:
+        raise ValueError("top_k must be at least 1")
+
+    results: list[dict[str, float | int]] = []
+    top_candidates: list[
+        tuple[dict[str, float | int], np.ndarray, list[float]]
+    ] = []
+    run_idx = 0
+    total_runs = len(learning_rates) * len(window_sizes)
+
+    for learning_rate in learning_rates:
+        for window_size in window_sizes:
+            run_idx += 1
+            print(
+                f"[CBOW Grid {run_idx}/{total_runs}] "
+                f"lr={learning_rate}, "
+                f"window={window_size}"
+            )
+
+            model = CBOW(
+                vocab_size=len(word_to_id),
+                embed_size=embed_size,
+                window_size=window_size,
+                learning_rate=learning_rate,
+                subsample_t=1e-2,
+                seed=seed,
+            )
+
+            loss_history = model.fit(train_data, epochs=epochs)
+            across_epochs: list[float] = []
+            if isinstance(loss_history, dict):
+                across_epochs = [
+                    float(x)
+                    for x in loss_history.get("across_epochs", [])
+                ]
+
+            train_loss = 0.0
+            if across_epochs:
+                train_loss = float(across_epochs[-1])
+
+            val_loss = float(model.evaluate(val_data))
+
+            run_metrics: dict[str, float | int] = {
+                "learning_rate": float(learning_rate),
+                "window_size": int(window_size),
+                "train_loss": train_loss,
+                "val_loss": val_loss,
+            }
+            results.append(run_metrics)
+
+            top_candidates.append(
+                (run_metrics, model.embeddings.copy(), across_epochs)
+            )
+            top_candidates.sort(key=lambda x: float(x[0]["val_loss"]))
+            top_candidates = top_candidates[:top_k]
+
+    if not results:
+        raise RuntimeError("No CBOW grid-search runs were executed.")
+
+    best_run = min(results, key=lambda x: float(x["val_loss"]))
+
+    artifacts_dir = (
+        Path(out_dir)
+        if out_dir is not None
+        else Path("grid_search_cbow_artifacts")
+    )
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+    saved_top_runs: list[dict[str, object]] = []
+    for rank, candidate in enumerate(top_candidates, start=1):
+        metrics, embeddings, across_epochs = candidate
+        learning_rate = float(metrics["learning_rate"])
+        window_size = int(metrics["window_size"])
+        lr_tag = str(learning_rate).replace(".", "p")
+        run_tag = f"rank{rank}_lr{lr_tag}_win{window_size}"
+
+        embeddings_path = artifacts_dir / f"{run_tag}_embeddings.npy"
+        loss_history_path = artifacts_dir / f"{run_tag}_loss_history.npz"
+
+        np.save(embeddings_path, np.asarray(embeddings))
+        np.savez(
+            loss_history_path,
+            across_epochs=np.asarray(
+                across_epochs,
+                dtype=np.float64,
+            ),
+        )
+
+        saved_top_runs.append(
+            {
+                "rank": rank,
+                **metrics,
+                "embeddings_path": str(embeddings_path),
+                "loss_history_path": str(loss_history_path),
+            }
+        )
+
+    return {
+        "num_runs": len(results),
+        "search_space": {
+            "learning_rates": learning_rates,
+            "window_sizes": window_sizes,
+        },
+        "best_by_val": best_run,
+        "artifacts_dir": str(artifacts_dir),
+        "top_k_saved": saved_top_runs,
+        "all_results": results,
+    }

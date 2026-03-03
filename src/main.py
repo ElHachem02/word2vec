@@ -1,14 +1,16 @@
+import json
 from pathlib import Path
 
 import kagglehub
 import numpy as np
 import typer
 
-from evaluate import test_nearest_neighbors, test_sum_words
-from model import CBOW, SkipGram, SkipGramNegativeSampling
-from utils import (
-    UNK_TOKEN,
+from .evaluate import test_nearest_neighbors, test_sum_words
+from .model import (CBOW, SkipGram, SkipGramNegativeSampling)
+from .utils import (
     build_vocab,
+    grid_search_cbow,
+    grid_search_negative_sampling,
     load_csv_train_val_test,
     plot_loss_history,
     tokenize,
@@ -25,12 +27,20 @@ app = typer.Typer(
 
 @app.command()
 def main(
+    grid_search: str = typer.Option(
+        None,
+        "--grid-search",
+        help=(
+            "If specified, should be either cbow (Continous Bag of "
+            "Words), sgns (Skip gram negative sampling), performs grid search on best hyperparameters combination"
+        )
+    ),
     train: str = typer.Option(
         None,
         "--train",
         help=(
             "If specified, should be either cbow (Continous Bag of "
-            "Words) or sgns (Skip gram negative sampling)"
+            "Words), sgns (Skip gram negative sampling)"
         ),
     ),
     load_model: Path | None = typer.Option(
@@ -44,9 +54,9 @@ def main(
         help="Number of epochs for training"
     )
 ):
-    if not train and not load_model:
+    if not train and not load_model and not grid_search:
         raise typer.BadParameter(
-            "Nothing to do. Use --train, --load-model, or both."
+            "Nothing to do. Use --train, --grid-search or --load-model."
         )
 
     print("Downloading dataset...")
@@ -65,7 +75,7 @@ def main(
     vocab_size = 3000
     embed_size = 50
     window_size = 2
-    learning_rate = 0.05
+    learning_rate = 0.1
     subsample_t = 1e-2
     negative_samples = 5
 
@@ -80,8 +90,33 @@ def main(
     train_data = [tokenize(words, word_to_id) for words in train_files]
     val_data = [tokenize(words, word_to_id) for words in val_files]
     test_data = [tokenize(words, word_to_id) for words in test_files]
-
     model: SkipGram
+
+    if grid_search == "cbow":
+        print("Running CBOW grid search...")
+        summary = grid_search_cbow(
+            train_data=train_data,
+            val_data=val_data,
+            word_to_id=word_to_id,
+            epochs=epochs
+        )
+        print(json.dumps(summary["best_by_val"], indent=2))
+        print(json.dumps(summary["top_k_saved"], indent=2))
+        print("Finished.")
+        return
+    elif grid_search == "sgns":
+        print("Running CBOW grid search...")
+        summary = grid_search_negative_sampling(
+            train_data=train_data,
+            val_data=val_data,
+            test_data=test_data,
+            word_to_id=word_to_id
+        )
+        print(json.dumps(summary["best_by_val"], indent=2))
+        print(json.dumps(summary["top_k_saved"], indent=2))
+        print("Finished.")
+        return
+
     if train == "sgns":
         model = SkipGramNegativeSampling(
             vocab_size=vocab_len,
@@ -121,10 +156,6 @@ def main(
                 across_epochs=np.asarray(
                     loss_history["across_epochs"],
                     dtype=np.float64,
-                ),
-                within_epoch=np.asarray(
-                    loss_history["within_epoch"],
-                    dtype=object,
                 ),
             )
             plot_path = plot_loss_history(loss_history_file)

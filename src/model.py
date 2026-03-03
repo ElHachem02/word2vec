@@ -1,5 +1,5 @@
 import numpy as np
-from utils import softmax, sigmoid
+from .utils import softmax, sigmoid
 from abc import ABC, abstractmethod
 
 
@@ -28,13 +28,11 @@ class SkipGram(ABC):
         self.W1_grad_sq = np.zeros_like(self.W1)
         self.W2_grad_sq = np.zeros_like(self.W2)
         self.loss_history: dict[str, list] = {
-            "within_epoch": [],
             "across_epochs": [],
         }
 
     def _reset_loss_history(self):
         self.loss_history = {
-            "within_epoch": [],
             "across_epochs": [],
         }
 
@@ -225,7 +223,6 @@ class CBOW(SkipGram):
                         )
 
             avg_loss = total_loss / num_trained if num_trained > 0 else 0.0
-            self.loss_history["within_epoch"].append(epoch_losses)
             self.loss_history["across_epochs"].append(float(avg_loss))
             print(
                 f"Epoch {epoch + 1} complete. Final Average Loss: "
@@ -482,7 +479,6 @@ class SkipGramNegativeSampling(SkipGram):
                 if num_trained_pairs > 0
                 else 0.0
             )
-            self.loss_history["within_epoch"].append(epoch_losses)
             self.loss_history["across_epochs"].append(float(avg_loss))
             print(
                 f"Epoch {epoch + 1} complete. Final Average Loss: "

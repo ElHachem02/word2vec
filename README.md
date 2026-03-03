@@ -1,13 +1,31 @@
-# Data
+# Overview
 
-## Overview
+This project uses the Brown Corpus (downloaded via `kagglehub`) to train word2vec embeddings with two training variants: Continuous Bag of Words (CBOW) and Skip-Gram with Negative Sampling (SGNS).
 
-This project uses the Brown Corpus (downloaded via `kagglehub`) to train word embeddings.
+## Environment Setup and Running
+
+To set up the environment, we recommend using `uv` with the following commands from the project directory:
+
+```bash
+uv venv
+source .venv/bin/activate
+uv pip install -r requirements.txt
+```
+
+## Data
+
+The Brown Corpus contains text paragraphs derived from the following categories:
+
+![Label distribution](plots/dataset/overall_label_distribution_pie.png)
+
 Class balance visualization:
+When splitting the dataset into train/val/test, labels are balanced across all three splits.
 
-![Label distribution](dataset/plots/label_distribution.png)
+![Label distribution](plots/dataset/label_distribution.png)
 
 ## Tokens
+
+To speed up local training, we set an upper vocabulary size limit of 3000 (most frequent tokens) and map the rest to the unknown token `<UNK>`.
 
 | Item                             | Value   |
 | -------------------------------- | ------- |
@@ -16,15 +34,23 @@ Class balance visualization:
 
 Token diagnostics:
 
-![Top tokens](dataset/plots/top_tokens.png)
-![UNK ratio](dataset/plots/unk_ratio.png)
+![Top tokens](plots/dataset/top_tokens.png)
+![UNK ratio](plots/dataset/unk_ratio.png)
+
+## Reproducing the plots
+
+To reproduce the dataset plots, run:
+
+```bash
+uv run python -m dataset.visualise
+```
 
 # Model
 
 Both models use an 80/10/10 train/val/test split.
 Split plot:
 
-![Train/Val/Test split sizes](dataset/plots/split_sizes.png)
+![Train/Val/Test split sizes](plots/dataset/split_sizes.png)
 
 ## Continuous Bag of Words (CBOW)
 
@@ -34,20 +60,21 @@ Training uses cross-entropy over the softmax output.
 ### Command
 
 ```bash
-cd src
-uv run python main.py --train cbow
+uv run python -m src.main --train cbow
 ```
 
 ### Loss plot
 
-![CBOW loss history](src/cbow_loss_history_plot.png)
+![CBOW loss history](plots/models/cbow_loss_history_plot.png)
 
 ### Validation/Test mini table
 
-| Metric      | Value             |
-| ----------- | ----------------- |
-| `val_loss`  | from training log |
-| `test_loss` | from training log |
+| Metric      | Value  |
+| ----------- | ------ |
+| `val_loss`  | 1.9096 |
+| `test_loss` | 1.9095 |
+
+### Testing embeddings in practice
 
 ## Skip-Gram with Negative Sampling (SGNS)
 
@@ -57,17 +84,76 @@ Training uses logistic loss for positive and negative pairs.
 ### Command
 
 ```bash
-cd src
-uv run python main.py --train sgns
+uv run python -m src.main --train sgns
 ```
 
 ### Loss plot
 
-![SGNS loss history](src/sgns_loss_history_plot.png)
+![SGNS loss history](plots/models/sgns_loss_history_plot.png)
 
 ### Validation/Test mini table
 
-| Metric      | Value             |
-| ----------- | ----------------- |
-| `val_loss`  | from training log |
-| `test_loss` | from training log |
+| Metric      | Value  |
+| ----------- | ------ |
+| `val_loss`  | 2.3074 |
+| `test_loss` | 2.3069 |
+
+### Testing embeddings in practice
+
+Nearest neighbors for 'man':
+
+- woman: 0.8363
+- girl: 0.8311
+- boy: 0.7793
+- lady: 0.7705
+- fat: 0.7645
+
+Nearest neighbors for 'time':
+
+- night: 0.7550
+- moment: 0.7536
+- instant: 0.7328
+- schedule: 0.7212
+- conclusion: 0.7016
+
+Nearest neighbors for 'year':
+
+- month: 0.8845
+- week: 0.8312
+- months: 0.7770
+- day: 0.7705
+- weeks: 0.7605
+
+Nearest neighbors for 'good':
+
+- bad: 0.8921
+- fine: 0.8431
+- nice: 0.8255
+- little: 0.8214
+- definite: 0.8045
+
+# Grid Search
+
+To perform a grid search on hyperparameters, run:
+
+```bash
+uv run python -m src.main --grid-search cbow
+uv run python -m src.main --grid-search sgns
+```
+
+To assess the best hyperparameters, check the printed JSON summary (`best_by_val`) after each grid-search run.
+
+### Continuous Bag of Words (CBOW): best hyperparameters
+
+- learning rate: `0.1`
+- window size: `2`
+
+### Skip-Gram with Negative Sampling (SGNS): best hyperparameters
+
+- learning rate: `0.05`
+- negative samples: `3`
+- window size: `2`
+
+```bash
+uv run python -m src.main --grid-search sgns
+```
