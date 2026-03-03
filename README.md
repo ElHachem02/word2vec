@@ -185,7 +185,3 @@ To assess the best hyperparameters, check the printed JSON summary (`best_by_val
 - learning rate: `0.05`
 - negative samples: `3`
 - window size: `2`
-
-```bash
-uv run python -m src.main --grid-search sgns
-```
